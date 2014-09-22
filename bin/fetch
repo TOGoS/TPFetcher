@@ -1,7 +1,15 @@
 #!/usr/bin/php
 <?php
 
-require_once dirname(__DIR__).'/vendor/autoload.php';
+$pd = __DIR__;
+while( true ) {
+	if( file_exists($f = "$pd/vendor/autoload.php") or file_exists($f = "$pd/autoload.php") ) {
+		require_once $f;
+		break;
+	}
+	if( $pd == '.' or $pd == '' ) break;
+	$pd = dirname($pd);
+}
 
 // TODO: Support verifying other hashes (esp. tiger-tree)
 
