@@ -1,27 +1,22 @@
 #!/usr/bin/php
 <?php
 
+require_once dirname(__DIR__).'/vendor/autoload.php';
+
 // TODO: Support verifying other hashes (esp. tiger-tree)
 
-class TOGoS_Fetcher_FSSHA1Repository
+class TOGoS_Fetcher_FetchFailure extends Exception
 {
-	protected $dir;
+	public $messages;
 	
-	public function __construct( $dir ) {
-		$this->dir = $dir;
+	public function __construct(array $messages) {
+		parent::__construct(implode("\n",$messages));
+		$this->messages = $messages;
 	}
-	
-	public static function urnToBasename( $urn ) {
-		if( preg_match( '/^urn:(?:sha1|bitprint):([0-9A-Z]{32})/', $urn, $bif ) ) {
-			return $bif[1];
-		}
-		return null;
-	}
-	
-	public function getDir() {
-		return $this->dir;
-	}
+}
 
+class TOGoS_Fetcher_HashUtil
+{
 	/**
 	 * Extract an SHA1 hash from a sha1/bitprint URN, hex-encoded
 	 * string, or non-encoded string (i.e. the has itself)
@@ -37,235 +32,115 @@ class TOGoS_Fetcher_FSSHA1Repository
 			throw new Exception("Unable to extract SHA-1 from string '$string'");
 		}
 	}
-	
-	public static function sha1Urn( $hash ) {
-		if( strlen($hash) != 20 ) {
-			throw new Exception("SHA-1 hash given should be a 20-byte string; got ".strlen($hash)." bytes");
-		}
-		return "urn:sha1:".TOGoS_Base32::encode($hash);
-	}
-	
-	protected function tempFileInSector($sector) {
-		$dataDir = $this->dir.'/data';
-		$tempDir = "{$dataDir}/{$sector}";
-		$tempFile = "{$tempDir}/.temp-".rand(1000000,9999999).'-'.rand(1000000,9999999);
-		if( !is_dir($tempDir) ) mkdir($tempDir,0755,true);
-		return $tempFile;
-	}
-	
-	// It might make more sense for this to be in server instead of
-	// repository so that the latest head can be found across multiple
-	// repositories.
-	protected function getHeadFile( $path ) {
-		// Allow colons in place of slashes to work
-		// around Apache/PHP getting confused about them.
-		$path = strtr($path, array(':'=>'/'));
-		// No dot-dots allowed!
-		if( strpos($path, '..') !== false) return null;
-		if( $path[0] == '/' ) return null;
-		
-		$headsDir = $this->dir.'/heads';
-		if( preg_match('#(.+?)/latest$#',$path,$bif) ) {
-			$headDir = $headsDir.'/'.$bif[1];
-			if( !is_dir($headDir) ) return null;
-			$dh = opendir($headDir);
-			if( $dh === false ) return null;
-			$headNumbers = array();
-			while( ($en = readdir($dh)) !== false ) {
-				if( $en[0] == '.' ) continue;
-				$headNumbers[] = $en;
-			}
-			closedir($dh);
-			natsort($headNumbers);
-			if( count($headNumbers) == 0 ) return null;
-			$latest = array_pop($headNumbers);
-			$file = "{$headDir}/{$latest}";
-		} else {
-			$file = $headsDir.'/'.$path;
-		}
-		return file_exists($file) ? $file : null;
-	}
-	
-	public function getFile( $urn ) {
-		if( preg_match('/^(?:x-)ccouch-head:(.*)$/', $urn, $bif) ) {
-			return $this->getHeadFile($bif[1]);
-		}
-		
-		$basename = self::urnToBasename($urn);
-		if( $basename === null ) return null;
-		
-		$first2 = substr($basename,0,2);
-		
-		$dataDir = $this->dir.'/data';
-		if( !is_dir($dataDir) ) {
-			// This may be due to something not being mounted,
-			// or it may be a configuration error.
-			// It might be good to log this somewhere,
-			// but for now we'll just let it slide.
-			return null;
-		}
-		$dir = opendir( $dataDir );
-		$fil = null;
-		while( $dir !== false and ($en = readdir($dir)) !== false ) {
-			$fil = "$dataDir/$en/$first2/$basename";
-			if( is_file($fil) ) break;
-			else $fil = null;
-		}
-		closedir($dir);
-		return $fil;
-	}
-	
-	/**
-	 * Moves a file to its proper location in the repository.
-	 * Hash must already have been calculated and verified.
-	 * @return string the destination path
-	 */
-	protected function insertTempFile( $tempFile, $sector, $hash ) {
-		$basename = TOGoS_Base32::encode($hash);
-		$first2 = substr($basename,0,2);
-		$dataDir = $this->dir.'/data';
-		$destDir = "$dataDir/$sector/$first2";
-		$destFile = "$destDir/$basename";
-		if( !is_dir($destDir) ) mkdir( $destDir, 0755, true );
-		if( !is_dir($destDir) ) throw new Exception("Failed to create directory: $destDir");
-		rename( $tempFile, $destFile );
-		return $destFile;
-	}
-	
-	public function putTempFile( $tempFile, $sector='uploaded', $expectedSha1=null ) {
-		if( $expectedSha1 !== null) $expectedSha1 = self::extractSha1($expectedSha1);
-		
-		$tempFr = fopen($tempFile,'rb');
-		$hash = hash_init('sha1');
-		while( !feof($tempFr) ) {
-			$data = fread( $tempFr, 1024*1024 );
-			hash_update( $hash, $data );
-		}
-		fclose( $tempFr );
-		$hash = hash_final( $hash, true );
-		
-		if( $expectedSha1 !== null and $hash != $expectedSha1 ) {
-			throw new Exception(
-				"Hash of temp file '$tempFile' does not match expected: ".
-				TOGoS_Base32::encode($hash)." != ".
-				TOGoS_Base32::encode($expectedSha1)
-			);
-		}
-		
-		$this->insertTempFile( $tempFile, $sector, $hash );
-		return self::sha1Urn($hash);
-	}
-	
-	public function putStream( $stream, $sector='uploaded', $expectedSha1=null ) {
-		if( $expectedSha1 !== null) $expectedSha1 = self::extractSha1($expectedSha1);
-		
-		$tempFile = $this->tempFileInSector($sector);
-		$tempFw = fopen($tempFile,'wb');
-		if( $tempFw === null ) {
-			throw new Exception("Unable to open temp file '{$tempFile}' in 'wb' mode");
-		}
-				
-		$hash = hash_init('sha1');
-		while( !feof($stream) ) {
-			$data = fread( $stream, 1024*1024 );
-			hash_update( $hash, $data );
-			fwrite( $tempFw, $data );
-		}
-		fclose( $tempFw );
-		$hash = hash_final( $hash, true );
-		
-		if( $expectedSha1 !== null and $hash != $expectedSha1 ) {
-			unlink( $tempFile );
-			throw new Exception(
-				"Hash of uploaded data does not match expected: ".
-				TOGoS_Base32::encode($hash)." != ".
-				TOGoS_Base32::encode($expectedSha1)
-			);
-		}
-		
-		$this->insertTempFile( $tempFile, $sector, $hash );
-		return self::sha1Urn($hash);
-	}
-	
-	public function putString( $data, $sector='uploaded', $expectedSha1=null ) {
-		if( $expectedSha1 !== null) $expectedSha1 = self::extractSha1($expectedSha1);
-		
-		$hash = sha1($data, true);
-		if( $expectedSha1 !== null and $hash != $expectedSha1 ) {
-			throw new Exception(
-				"Hash of uploaded data does not match expected: ".
-				TOGoS_Base32::encode($hash)." != ".
-				TOGoS_Base32::encode($expectedSha1)
-			);
-		}
-		
-		$tempFile = $this->tempFileInSector($sector);
-		$tempFw = fopen($tempFile,'wb');
-		fwrite($tempFw, $data);
-		fclose($tempFw);
-		$this->insertTempFile($tempFile, $sector, $hash);
-		return self::sha1Urn($hash);
-	}
 }
 
 class TOGoS_Fetcher {
-      public static function defuzzRemoteRepoPrefix( $url ) {
-			// Bare hostname?
-			if( preg_match('#^[^/]+$#', $url) ) {
-				$url = "http://$url";
-			}
-			// No path?
-			if( preg_match('#^https?://[^/]+$#', $url) ) {
-				$url .= '/uri-res/N2R?';
-			}
-			// Ends with something other than '/' or '?'?
-			if( !preg_match('#[\?/]$#', $url) ) {
-				$url .= '?';
-			}
-			return $url;
-      }
+	public static function defuzzRemoteRepoPrefix( $url ) {
+		// Bare hostname?
+		if( preg_match('#^[^/]+$#', $url) ) {
+			$url = "http://$url";
+		}
+		// No path?
+		if( preg_match('#^https?://[^/]+$#', $url) ) {
+			$url .= '/uri-res/N2R?';
+		}
+		// Ends with something other than '/' or '?'?
+		if( !preg_match('#[\?/]$#', $url) ) {
+			$url .= '?';
+		}
+		return $url;
+	}
+	
+	protected $cacheRepoDir;
+	protected $cacheSector;
+	protected $remoteRepoUrls;
+	
+	public function __construct( $cacheRepoDir, $cacheSector, array $remoteRepoUrls ) {
+		$this->cacheRepoDir = $cacheRepoDir;
+		$this->cacheSector = $cacheSector;
+		$this->remoteRepoUrls = $remoteRepoUrls;
+	}
+	
+	protected function possibleRemoteUrls( $urn ) {
+		$r = array();
+		foreach( $this->remoteRepoUrls as $u ) {
+			$r[] = $u.$urn;
+		}
+		shuffle($r);
+		return $r;
+	}
+	
+	/**
+	 * Returns the path of the file, if successfully cached
+	 */
+	public function cache( $urn ) {
+		throw new Exception(__FUNCTION__.' not yet implemented!');
+	}
+	
+	protected function tempFile( $f ) {
+		$dir = dirname($f) ?: '.';
+		return tempnam($dir, ".temp-".basename($f));
+	}
+	
+	protected function download( $urn, $destFile ) {
+		$expectedSha1 = TOGoS_Fetcher_HashUtil::extractSha1($urn);
+		$failures = array();
 		
-		protected $cacheRepoDir;
-		protected $cacheSector;
-		protected $remoteRepoUrls;
-		
-		public function __construct( $cacheRepoDir, $cacheSector, array $remoteRepoUrls ) {
-			$this->cacheRepoDir = $cacheRepoDir;
-			$this->cacheSector = $cacheSector;
-			$this->remoteRepoUrls = $remoteRepoUrls;
+		foreach( $this->possibleRemoteUrls($urn) as $url ) {
+			$rfh = @fopen($url, 'rb');
+			if( $rfh === false ) {
+				$failures[] = "$url: failed to open stream";
+				continue;
+			}
+			
+			$wfh = fopen($destFile, 'wb');
+			// TODO: identify hash functions used in URN and try to verify all possible
+			if( $wfh === false ) {
+				throw new Exception("Failed to open '$destFile' for writing.");
+			}
+			
+			$size = 0;
+			$startedWriting = true;
+			$hasher = hash_init('sha1');
+			while( $buf = fread($rfh, 1024*1024) ) {
+				fwrite($wfh, $buf);
+				hash_update($hasher, $buf);
+				$size += strlen($buf);
+			}
+			fclose($wfh);
+			fclose($rfh);
+			$sha1 = hash_final($hasher, true);
+			if( $sha1 == $expectedSha1 ) return $size;
+			
+			$failures[] = "$url: expected SHA-1 ".TOGoS_Base32::encode($expectedSha1).
+				", got ".TOGoS_Base32::encode($sha1);
 		}
 		
-		protected $cacheRepo;
-		protected function getCacheRepo() {
-			if( $this->cacheRepo === null ) {
-				if( $this->cacheRepoDir === null ) {
-					throw new Exception("Can't instantiate cache repository because not cache directory is set!");
-				}
-				$this->cacheRepo = new TOGoS_Fetcher_FSSHA1Repository($this->cacheRepoDir);
-			}
-			return $this->cacheRepo;
+		if( count($this->remoteRepoUrls) == 0 ) {
+			$failures[] = "No remote repositories were given.";
 		}
 		
-		protected function possibleRemoteUrls( $urn ) {
-			$r = array();
-			foreach( $this->remoteRepoUrls as $u ) {
-				$r[] = $u.$urn;
-			}
-			shuffle($r);
-			return $r;
+		throw new TOGoS_Fetcher_FetchFailure($failures);
+	}
+	
+	public function checkout( $urn, $destFile ) {
+		// TODO: Check cache!
+		// TODO: Check if the file is already checked out!
+		$tempFile = $this->tempFile($destFile);
+		try {
+			$size = $this->download( $urn, $tempFile );
+		} catch( Exception $e ) {
+			unlink($tempFile);
+			throw $e;
 		}
-		
-		/**
-		 * Returns the path of the file, if successfully cached
-		 */
-		public function cache( $urn ) {
-			$repo = $this->getCacheRepo();
-			throw new Exception(__FUNCTION__.' not yet implemented!');
+		if( !rename($tempFile, $destFile) ) {
+			throw new Exception("Failed to move '$tempFile' to '$destFile'");
 		}
-		
-		public function download( $urn, $destFile ) {
-			throw new Exception(__FUNCTION__.' not yet implemented!');
+		if( file_exists($destFile) and ($destSize = filesize($destFile)) != $size ) {
+			unlink($destFile);
+			throw new Exception("Downloaded $size bytes but '$destFile' is only $destSize.");
 		}
+	}
 }
 
 $usageText1 = "Usage: $argv[0] [options] <source URN> <dest file>";
@@ -331,7 +206,28 @@ foreach( $remoteRepoSpecs as $r ) {
 	}
 }
 
-foreach( $remoteRepoUrls as $r ) echo $r, "\n";
+if( $sourceUrn === null ) {
+	fwrite(STDERR, "Error: No source URN specified\n\n$usageText1\n");
+	exit(1);
+}
+if( $destFile === null ) {
+	fwrite(STDERR, "Error: No destination file specified\n\n$usageText1\n");
+	exit(1);
+}
+
+// foreach( $remoteRepoUrls as $r ) echo $r, "\n";
 
 $fetcher = new TOGoS_Fetcher( $cacheRepo, $cacheSector, $remoteRepoUrls );
-$fetcher->download( $sourceUrn, $destFile );
+try {
+	$fetcher->checkout( $sourceUrn, $destFile );
+} catch( TOGoS_Fetcher_FetchFailure $f ) {
+	fwrite(STDERR, "Error: Failed to fetch $sourceUrn.\n");
+	foreach( $f->messages as $m ) {
+		if( preg_match('/^(.+?): (.+)$/', $m, $bif) ) {
+			fwrite(STDERR, "  $bif[1]:\n    $bif[2]\n");
+		} else {
+			fwrite(STDERR, "  $m\n");
+		}
+	}
+	exit(1);
+}
