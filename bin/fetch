@@ -177,6 +177,14 @@ for( $i=1; $i<count($argv); ++$i ) {
 		$cacheRepo = $argv[++$i];
 	} else if( '-cache-sector' == $argv[$i] ) {
 		$cacheSector = $argv[++$i];
+	} else if( '-o' == $argv[$i] ) {
+		if( $destFile !== null ) {
+			fwrite(STDERR,
+				"Error: Destination file specified multiple times:\n".
+				"'$destFile', '".$argv[++$i]."'\n\n$usageText1\n");
+			exit(1);
+		}
+		$destFile = $argv[++$i];
 	} else if( $argv[$i][0] != '-' or $argv[$i] == '-' ) {
 		if( $sourceUrn === null ) {
 			$sourceUrn = $argv[$i];
