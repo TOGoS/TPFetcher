@@ -4,5 +4,8 @@
 	"license": "MIT",
 	"require": {
 		"togos/base32": "~1.0.0"
-	}
+	},
+	"bin": [
+		"bin/fetch"
+	]
 }
