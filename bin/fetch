@@ -141,6 +141,9 @@ class TOGoS_Fetcher {
 			unlink($tempFile);
 			throw $e;
 		}
+		if( $destDir = dirname($destFile) and !is_dir($destDir) ) {
+			mkdir($destDir, 0755, true);
+		}
 		if( !rename($tempFile, $destFile) ) {
 			throw new Exception("Failed to move '$tempFile' to '$destFile'");
 		}
