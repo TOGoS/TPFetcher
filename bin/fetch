@@ -151,6 +151,7 @@ class TOGoS_Fetcher {
 			unlink($destFile);
 			throw new Exception("Downloaded $size bytes but '$destFile' is only $destSize.");
 		}
+		chmod($destFile, 0644);
 	}
 }
 
