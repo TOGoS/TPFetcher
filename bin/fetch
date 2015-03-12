@@ -1,16 +1,6 @@
 #!/usr/bin/php
 <?php
 
-$pd = __DIR__;
-while( true ) {
-	if( file_exists($f = "$pd/vendor/autoload.php") or file_exists($f = "$pd/autoload.php") ) {
-		require_once $f;
-		break;
-	}
-	if( $pd == '.' or $pd == '' ) break;
-	$pd = dirname($pd);
-}
-
 // TODO: Support verifying other hashes (esp. tiger-tree)
 
 class TOGoS_Fetcher_FetchFailure extends Exception
@@ -57,6 +47,67 @@ class TOGoS_Fetcher {
 			$url .= '?';
 		}
 		return $url;
+	}
+	
+	protected static function joinPath( $p1, $p2 ) {
+		if( $p1[strlen($p1)-1] == '/' ) $p1 = substr($p1,0,strlen($p1)-1);
+		if( $p2[0] == '/' ) $p2 = substr($p2,1);
+		return "{$p1}/{$p2}";
+	}
+	
+	protected static function findStandardRemoteRepoListsIn( $dir, array &$files ) {
+		$searchSuffixes = array(
+			'.ccouch/remote-repos.lst',
+			'.ccouch-remote-repos.lst'
+		);
+		foreach( $searchSuffixes as $s ) {
+			if( file_exists($lf = self::joinPath($dir,$s)) ) {
+				$files[$lf] = $lf;
+			}
+		}
+	}
+	
+	public static function findStandardRemoteRepoLists( array &$files ) {
+		$dir = getcwd();
+		while( !empty($dir) ) {
+			self::findStandardRemoteRepoListsIn($dir, $files);
+			$pDir = dirname($dir);
+			if( $pDir == $dir ) break;
+			$dir = $pDir;
+		}
+		if( isset($_SERVER['HOME']) ) {
+			self::findStandardRemoteRepoListsIn($_SERVER['HOME'], $files);
+		}
+		//$nuke = 'http://www.nuke24.net/ccouch-remote-repos.lst';
+		//$files[$nuke] = $nuke;
+	}
+	
+	public static function loadStandardRepoLists( array &$remoteRepoUrls ) {
+		$listFiles = array();
+		self::findStandardRemoteRepoLists( $listFiles );
+		foreach( $listFiles as $lf ) {
+			self::loadRepoList($lf, $remoteRepoUrls);
+		}
+	}
+	
+	public static function loadRepoList( $file, array &$remoteRepoUrls ) {
+		$fh = @fopen($file, 'r');
+		if( $fh === false ) {
+			fwrite(STDERR, "Warning: Couldn't open repository list file '$file'\n");
+			return;
+		}
+		while( ($line = fgets($fh)) !== false ) {
+			$line = trim($line);
+			if( $line == '' or $line[0] == '#' ) continue;
+			if( preg_match('/^(\S+) = (\S+)$/',$line,$bif) ) {
+				$fuzz = $bif[2];
+			} else {
+				$fuzz = $line;
+			}
+			$url = TOGoS_Fetcher::defuzzRemoteRepoPrefix($fuzz);
+			$remoteRepoUrls[$url] = $url;
+		}
+		fclose($fh);
 	}
 	
 	protected $cacheRepoDir;
@@ -162,21 +213,25 @@ $usageText2 =
 	"Options:\n".
 	"  -repo <url>          ; remote repository to pull from\n".
 	"  -repo @<file.lst>    ; remote repository list file\n".
+	"  -extrovert           ; load repository lists from various sources\n".
 	"  -cache-repo <path>   ; local repository to cache into\n".
-	"  -cache-sector <name> ; name of sector to cache into";
-	
+	"  -cache-sector <name> ; name of sector to cache into";	
 
-$homedir = getenv('HOME');
+$homedir = isset($_SERVER['HOME']) ? $_SERVER['HOME'] : getenv('HOME');
 
+$extroverted = false;
 $cacheRepo = $homedir ? "$homedir/.ccouch" : null;
 $cacheSector = 'cache';
 $remoteRepoSpecs = array();
 $sourceUrn = null;
 $destFile = null;
+$mode = 'fetch';
 for( $i=1; $i<count($argv); ++$i ) {
 	if( '-repo' == $argv[$i] ) {
 		$r = $argv[++$i];
 		$remoteRepoSpecs[$r] = $r;
+	} else if( '-extrovert' == $argv[$i] ) {
+		$extroverted = true;
 	} else if( '-cache-repo' == $argv[$i] ) {
 		$cacheRepo = $argv[++$i];
 	} else if( '-cache-sector' == $argv[$i] ) {
@@ -198,32 +253,41 @@ for( $i=1; $i<count($argv); ++$i ) {
 			fwrite(STDERR, "Error: Extraneous third non-option argument: '$argv[$i]'\n\n$usageText1\n");
 			exit(1);
 		}
+	} else if( '-dump-config' == $argv[$i] ) {
+		$mode = 'dump-config';
+	} else if( '-?' == $argv[$i] ) {
+		$mode = 'show-help';
 	} else {
-		fwrite(STDERR, "Error: Unrecognised option: '$argv[$i]'\n\n$usageText2\n");
+		fwrite(STDERR, "Error: Unrecognized option: '$argv[$i]'\n\n$usageText2\n");
 		exit(1);
 	}
 }
 
+if( $mode == 'show-help' ) {
+	echo "$usageText2\n";
+	exit(0);
+}
+
 $remoteRepoUrls = array();
+if( $extroverted ) {
+	TOGoS_Fetcher::loadStandardRepoLists($remoteRepoUrls);
+}
 foreach( $remoteRepoSpecs as $r ) {
 	if( $r[0] == '@' ) {
 		$rf = substr($r,1);
-		$fh = @fopen($rf, 'r');
-		if( $fh === false ) {
-			fwrite(STDERR, "Error: Couldn't open '$rf'\n");
-			exit(1);
-		}
-		while( ($line = fgets($fh)) !== false ) {
-			$line = trim($line);
-			if( $line == '' or $line[0] == '#' ) continue;
-			$url = TOGoS_Fetcher::defuzzRemoteRepoPrefix($line);
-			$remoteRepoUrls[$url] = $url;
-		}
-		fclose($fh);
+		TOGoS_Fetcher::loadRepoList($rf, $remoteRepoUrls);
 	} else {
 		$url = TOGoS_Fetcher::defuzzRemoteRepoPrefix($r);
 		$remoteRepoUrls[$url] = $url;
 	}
+}
+
+if( $mode == 'dump-config' ) {
+	echo "Remote repositories:\n";
+	foreach( $remoteRepoUrls as $url ) {
+		echo "  $url\n";
+	}
+	exit(0);
 }
 
 if( $sourceUrn === null ) {
