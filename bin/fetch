@@ -3,6 +3,20 @@
 
 // TODO: Support verifying other hashes (esp. tiger-tree)
 
+function findBootstrapFile() {
+	$bss = "vendor/autoload.php";
+	$dir = getcwd();
+	$prevDir = null;
+	while( $dir !== null and $dir !== $prevDir ) {
+		if( file_exists($bsf = "$dir/$bss") ) {
+			return $bsf;
+		}
+		$prevDir = $dir;
+		$dir = dirname($dir);
+	}
+	throw new Exception("'$bss' not found");
+}
+
 class TOGoS_Fetcher_FetchFailure extends Exception
 {
 	public $messages;
@@ -267,6 +281,8 @@ if( $mode == 'show-help' ) {
 	echo "$usageText2\n";
 	exit(0);
 }
+
+require_once findBootstrapFile();
 
 $remoteRepoUrls = array();
 if( $extroverted ) {
