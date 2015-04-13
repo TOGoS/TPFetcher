@@ -5,14 +5,15 @@
 
 function findBootstrapFile() {
 	$bss = "vendor/autoload.php";
-	$dir = getcwd();
-	$prevDir = null;
-	while( $dir !== null and $dir !== $prevDir ) {
-		if( file_exists($bsf = "$dir/$bss") ) {
-			return $bsf;
+	foreach( array(__DIR__, getcwd()) as $dir ) {
+		$prevDir = null;
+		while( $dir !== null and $dir !== $prevDir ) {
+			if( file_exists($bsf = "$dir/$bss") ) {
+				return $bsf;
+			}
+			$prevDir = $dir;
+			$dir = dirname($dir);
 		}
-		$prevDir = $dir;
-		$dir = dirname($dir);
 	}
 	throw new Exception("'$bss' not found");
 }
