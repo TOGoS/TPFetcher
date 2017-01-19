@@ -171,6 +171,9 @@ class TOGoS_Fetcher {
 				$existing = "{$dataDir}/{$sector}/{$psp}";
 				if( file_exists($existing) ) return $existing;
 			}
+			// For compatibility with some buggy systems...
+			$existing = "{$dataDir}/{$psp}";
+			if( file_exists($existing) ) return $existing;
 		}
 		
 		$destFile = "{$dataDir}/{$this->cacheSector}/{$psp}";
