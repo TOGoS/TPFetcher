@@ -87,15 +87,16 @@ class TOGoS_Fetcher {
 		//$files[$nuke] = $nuke;
 	}
 	
-	public static function loadStandardRepoLists( array &$remoteRepoUrls ) {
+	public static function loadStandardRepoLists( array &$remoteRepoUrls=array() ) {
 		$listFiles = array();
 		self::findStandardRemoteRepoLists( $listFiles );
 		foreach( $listFiles as $lf ) {
 			self::loadRepoList($lf, $remoteRepoUrls);
 		}
+		return $remoteRepoUrls;
 	}
 	
-	public static function loadRepoList( $file, array &$remoteRepoUrls ) {
+	public static function loadRepoList( $file, array &$remoteRepoUrls=array() ) {
 		$fh = @fopen($file, 'r');
 		if( $fh === false ) {
 			fwrite(STDERR, "Warning: Couldn't open repository list file '$file'\n");
@@ -113,6 +114,7 @@ class TOGoS_Fetcher {
 			$remoteRepoUrls[$url] = $url;
 		}
 		fclose($fh);
+		return $remoteRepoUrls;
 	}
 	
 	protected $cacheRepoDir;
