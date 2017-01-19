@@ -5,6 +5,14 @@
 	"require": {
 		"togos/base32": "~1.0.0"
 	},
+	"require-dev": {
+		"phpunit/phpunit": "^3.7"	
+	},
+	"autoload": {
+		"psr-0": {
+			"TOGoS_Fetcher": "lib/"
+		}
+	},
 	"bin": [
 		"bin/fetch"
 	]

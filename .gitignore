@@ -1,2 +1,5 @@
-vendor
-repos.lst
+/.ccouch
+/composer.lock
+/repos.lst
+/temp
+/vendor
