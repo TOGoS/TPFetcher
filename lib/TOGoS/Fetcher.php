@@ -27,6 +27,14 @@ class TOGoS_Fetcher_HashUtil
 			throw new Exception("Unable to extract SHA-1 from string '$string'");
 		}
 	}
+	
+	public static function extractBase32Sha1( $string ) {
+		if( preg_match( '/^(?:(?:urn:)?(?:sha1|bitprint):)?([0-9A-Z]{32})(?:$|\W)/i', $string, $bif ) ) {
+			return $bif[1];
+		} else {
+			return TOGoS_Base32::encode(self::extractSha1($string));
+		}
+	}
 }
 
 class TOGoS_Fetcher {
@@ -110,6 +118,8 @@ class TOGoS_Fetcher {
 	protected $cacheRepoDir;
 	protected $cacheSector;
 	protected $remoteRepoUrls;
+	public $downloadAttemptCount = 0;
+	public $downloadCount = 0;
 	
 	public function __construct( $cacheRepoDir, $cacheSector, array $remoteRepoUrls ) {
 		$this->cacheRepoDir = $cacheRepoDir;
@@ -126,29 +136,74 @@ class TOGoS_Fetcher {
 		return $r;
 	}
 	
+	protected function mkDirs( $dir ) {
+		if( !is_dir($dir) ) mkdir($dir, 0755, true);
+	}
+	
+	protected function mkParentDirs( $file ) {
+		$this->mkDirs( dirname($file) );
+	}
+	
+	protected function completeDownload( $tempFile, $destFile, $expectedSize ) {
+		if( !rename($tempFile, $destFile) ) {
+			throw new Exception("Failed to move '$tempFile' to '$destFile'");
+		}
+		if( file_exists($destFile) and ($destSize = filesize($destFile)) != $expectedSize ) {
+			unlink($destFile);
+			throw new Exception("Downloaded $size bytes but '$destFile' is only $destSize.");
+		}
+		chmod($destFile, 0644);
+		return $destFile;
+	}
+	
 	/**
 	 * Returns the path of the file, if successfully cached
 	 */
 	public function cache( $urn ) {
-		throw new Exception(__FUNCTION__.' not yet implemented!');
+		$base32Sha1 = TOGoS_Fetcher_HashUtil::extractBase32Sha1($urn);
+		$psp = substr($base32Sha1,0,2)."/".$base32Sha1;
+		$dataDir = "{$this->cacheRepoDir}/data";
+		if( is_dir($dataDir) ) {
+			foreach( scandir($dataDir) as $sector ) {
+				if( $sector[0] == '.' ) continue;
+				$existing = "{$dataDir}/{$sector}/{$psp}";
+				if( file_exists($existing) ) return $existing;
+			}
+		}
+		
+		$destFile = "{$dataDir}/{$this->cacheSector}/{$psp}";
+		$tempFile = $this->tempFile($destFile);
+		try {
+			$size = $this->download( $urn, $tempFile );
+		} catch( Exception $e ) {
+			unlink($tempFile);
+			throw $e;
+		}
+		
+		return $this->completeDownload( $tempFile, $destFile, $size );
 	}
 	
 	protected function tempFile( $f ) {
 		$dir = dirname($f) ?: '.';
 		return tempnam($dir, ".temp-".basename($f));
 	}
-	
+
+	/**
+	 * @return number of bytes downloaded and written to $destFile
+	 */
 	protected function download( $urn, $destFile ) {
 		$expectedSha1 = TOGoS_Fetcher_HashUtil::extractSha1($urn);
 		$failures = array();
 		
 		foreach( $this->possibleRemoteUrls($urn) as $url ) {
+			++$this->downloadAttemptCount;
 			$rfh = @fopen($url, 'rb');
 			if( $rfh === false ) {
 				$failures[] = "$url: failed to open stream";
 				continue;
 			}
-			
+
+			$this->mkParentDirs($destFile);
 			$wfh = fopen($destFile, 'wb');
 			// TODO: identify hash functions used in URN and try to verify all possible
 			if( $wfh === false ) {
@@ -166,7 +221,10 @@ class TOGoS_Fetcher {
 			fclose($wfh);
 			fclose($rfh);
 			$sha1 = hash_final($hasher, true);
-			if( $sha1 == $expectedSha1 ) return $size;
+			if( $sha1 == $expectedSha1 ) {
+				++$this->downloadCount;
+				return $size;
+			}
 			
 			$failures[] = "$url: expected SHA-1 ".TOGoS_Base32::encode($expectedSha1).
 				", got ".TOGoS_Base32::encode($sha1);
@@ -189,16 +247,6 @@ class TOGoS_Fetcher {
 			unlink($tempFile);
 			throw $e;
 		}
-		if( $destDir = dirname($destFile) and !is_dir($destDir) ) {
-			mkdir($destDir, 0755, true);
-		}
-		if( !rename($tempFile, $destFile) ) {
-			throw new Exception("Failed to move '$tempFile' to '$destFile'");
-		}
-		if( file_exists($destFile) and ($destSize = filesize($destFile)) != $size ) {
-			unlink($destFile);
-			throw new Exception("Downloaded $size bytes but '$destFile' is only $destSize.");
-		}
-		chmod($destFile, 0644);
+		return $this->completeDownload( $tempFile, $destFile, $size );
 	}
 }

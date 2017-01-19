@@ -19,4 +19,26 @@ class TOGoS_FetcherTest extends PHPUnit_Framework_TestCase
 		$this->assertTrue( file_exists($destFile) );
 		$this->assertEquals( 37527, filesize($destFile) );
 	}
+	
+	public function testCache() {
+		$fetcher = $this->makeFetcher();
+		$destFile = ".ccouch/data/test-cache/WY/WYD6VDKXNMXCV2WGQZMHBAOCWLU2UMNR";
+		if( file_exists($destFile) ) unlink($destFile);
+		$fetcher->cache( 'urn:bitprint:WYD6VDKXNMXCV2WGQZMHBAOCWLU2UMNR.VPQ4PXFHT7YKYMQCRTIUUFI3O2RNAE7BKB2TSIY' );
+		$this->assertEquals( 1, $fetcher->downloadCount );
+		$this->assertTrue( file_exists($destFile) );
+		$this->assertEquals( 37527, filesize($destFile) );
+		
+		$fetcher->cache( 'urn:bitprint:WYD6VDKXNMXCV2WGQZMHBAOCWLU2UMNR.VPQ4PXFHT7YKYMQCRTIUUFI3O2RNAE7BKB2TSIY' );
+		$this->assertEquals( 1, $fetcher->downloadCount );
+		$this->assertTrue( file_exists($destFile) );
+		$this->assertEquals( 37527, filesize($destFile) );
+		
+		unlink($destFile);
+		
+		$fetcher->cache( 'urn:bitprint:WYD6VDKXNMXCV2WGQZMHBAOCWLU2UMNR.VPQ4PXFHT7YKYMQCRTIUUFI3O2RNAE7BKB2TSIY' );
+		$this->assertEquals( 2, $fetcher->downloadCount );
+		$this->assertTrue( file_exists($destFile) );
+		$this->assertEquals( 37527, filesize($destFile) );
+	}
 }
