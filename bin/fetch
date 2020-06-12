@@ -19,7 +19,7 @@ function findBootstrapFile() {
 }
 
 
-$usageText1 = "Usage: $argv[0] [options] <source URN> <dest file>";
+$usageText1 = "Usage: $argv[0] [options] <source URN> -o <dest file>";
 $usageText2 =
 	"$usageText1\n".
 	"\n".
